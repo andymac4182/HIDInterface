@@ -79,7 +79,7 @@ namespace USBInterface
         ///device: hid_device*
         ///nonblock: int
         [DllImport(DllFileName, CallingConvention = CallingConvention.Cdecl)]
-        public extern static int hid_set_nonblocking(IntPtr device, int nonblock);
+        public static extern int hid_set_nonblocking(IntPtr device, int nonblock);
 
 
         /// Return Type: int
@@ -101,7 +101,7 @@ namespace USBInterface
         /// Return Type: void
         ///device: hid_device*
         [DllImport(DllFileName, CallingConvention = CallingConvention.Cdecl)]
-        public extern static void hid_close(IntPtr device);
+        public static extern void hid_close(IntPtr device);
 
 
         /// Return Type: int
