@@ -1,25 +1,20 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using USBInterface;
 
 namespace TestUSBInterface
 {
     class Program
     {
-
-        public static void handle(object s, USBInterface.ReportEventArgs a)
+        public static void Handle(object s, ReportEventArgs a)
         {
             Console.WriteLine(string.Join(", ", a.Data));
         }
 
-        public static void enter(object s, EventArgs a)
+        public static void Enter(object s, EventArgs a)
         {
             Console.WriteLine("device arrived");
         }
-        public static void exit(object s, EventArgs a)
+        public static void Exit(object s, EventArgs a)
         {
             Console.WriteLine("device removed");
         }
@@ -27,9 +22,9 @@ namespace TestUSBInterface
         static void Main(string[] args)
         {
             // setup a scanner before hand
-            DeviceScanner scanner = new DeviceScanner(0x4d8, 0x3f);
-            scanner.DeviceArrived += enter;
-            scanner.DeviceRemoved += exit;
+            var scanner = new DeviceScanner(0x20A0, 0x4241);
+            scanner.DeviceArrived += Enter;
+            scanner.DeviceRemoved += Exit;
             scanner.StartAsyncScan();
             Console.WriteLine("asd");
 
@@ -37,19 +32,19 @@ namespace TestUSBInterface
             try
             {
                 // this can all happen inside a using(...) statement
-                USBDevice dev = new USBDevice(0x4d8, 0x3f, null, false, 31);
+                var dev = new USBDevice(0x4d8, 0x3f, null, false, 31);
 
                 Console.WriteLine(dev.Description());
 
                 // add handle for data read
-                dev.InputReportArrivedEvent += handle;
+                dev.InputReportArrivedEvent += Handle;
                 // after adding the handle start reading
                 dev.StartAsyncRead();
                 // can add more handles at any time
-                dev.InputReportArrivedEvent += handle;
+                dev.InputReportArrivedEvent += Handle;
 
                 // write some data
-                byte[] data = new byte[32];
+                var data = new byte[32];
                 data[0] = 0x00;
                 data[1] = 0x23;
                 dev.Write(data);

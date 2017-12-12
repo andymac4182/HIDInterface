@@ -1,8 +1,5 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Text;
-using System.Threading.Tasks;
 using System.Runtime.InteropServices;
 using System.Globalization;
 using System.Threading;
@@ -16,52 +13,49 @@ namespace USBInterface
         public event EventHandler<ReportEventArgs> InputReportArrivedEvent;
         public event EventHandler DeviceDisconnecedEvent;
 
-        public bool isOpen
-        {
-            get { return DeviceHandle != IntPtr.Zero; }
-        }
+        public bool IsOpen => _deviceHandle != IntPtr.Zero;
 
         // If the read process grabs ownership of device
         // and blocks (unable to get any data from device) 
         // for more than Timeout millisecons 
         // it will abandon reading, pause for readIntervalInMillisecs
         // and try reading again.
-        private int readTimeoutInMillisecs = 1;
+        private int _readTimeoutInMillisecs = 1;
         public int ReadTimeoutInMillisecs
         {
-            get { lock (syncLock) { return  readTimeoutInMillisecs; } }
-            set { lock(syncLock) {  readTimeoutInMillisecs = value; } }
+            get { lock (_syncLock) { return  _readTimeoutInMillisecs; } }
+            set { lock(_syncLock) {  _readTimeoutInMillisecs = value; } }
         }
 
         // Interval of time between two reads,
         // during this time the device is free and 
         // we can write to it.
-        private int readIntervalInMillisecs = 4;
+        private int _readIntervalInMillisecs = 4;
         public int ReadIntervalInMillisecs
         {
-            get { lock (syncLock) { return readIntervalInMillisecs; } }
-            set { lock(syncLock) { readIntervalInMillisecs = value; } }
+            get { lock (_syncLock) { return _readIntervalInMillisecs; } }
+            set { lock(_syncLock) { _readIntervalInMillisecs = value; } }
         }
 
         // for async reading
-        private object syncLock = new object();
-        private Thread readThread;
-        private volatile bool asyncReadOn = false;
+        private readonly object _syncLock = new object();
+        private Thread _readThread;
+        private volatile bool _asyncReadOn;
 
         // Flag: Has Dispose already been called?
         // Marked as volatile because Dispose() can be called from another thread.
-        private volatile bool disposed = false;
+        private volatile bool _disposed;
 
-        private IntPtr DeviceHandle = IntPtr.Zero;
+        private IntPtr _deviceHandle;
 
         // this will be the return buffer for strings,
         // make it big, becasue by the HID spec (can not find page)
         // we are allowed to request more bytes than the device can return.
-        private StringBuilder pOutBuf = new StringBuilder(1024);
+        private readonly StringBuilder _pOutBuf = new StringBuilder(1024);
 
         // This is very convinient to use for the 90% of devices that 
         // dont use ReportIDs and so have only one input report
-        private int DefaultInputReportLength = -1;
+        private readonly int _defaultInputReportLength = -1;
 
         // This only affects the read function.
         // receiving / sending a feature report,
@@ -71,7 +65,7 @@ namespace USBInterface
         // the prefix byte is NOT inserted. On the other hand if the device uses 
         // Report IDs then when reading we must read +1 byte and byte 0 
         // of returned data array will be the Report ID.
-        private bool hasReportIds = false;
+        private readonly bool _hasReportIds;
 
         // HIDAPI does not provide any way to get or parse the HID Report Descriptor,
         // This means you must know in advance what it the report size for your device.
@@ -79,21 +73,21 @@ namespace USBInterface
         // 
         // Serial Number is optional, pass null (do NOT pass an empty string) if it is unknown.
         // 
-        public USBDevice(ushort VendorID
-            , ushort ProductID
-            , string serial_number
-            , bool HasReportIDs = true
+        public USBDevice(ushort vendorId
+            , ushort productId
+            , string serialNumber
+            , bool hasReportIDs = true
             , int defaultInputReportLen = -1)
         {
-            DeviceHandle = HidApi.hid_open(VendorID, ProductID, serial_number);
+            _deviceHandle = HidApi.hid_open(vendorId, productId, serialNumber);
             AssertValidDev();
-            DefaultInputReportLength = defaultInputReportLen;
-            hasReportIds = HasReportIDs;
+            _defaultInputReportLength = defaultInputReportLen;
+            _hasReportIds = hasReportIDs;
         }
 
         private void AssertValidDev()
         {
-            if (DeviceHandle == IntPtr.Zero) throw new Exception("No device opened");
+            if (_deviceHandle == IntPtr.Zero) throw new Exception("No device opened");
         }
 
         public void GetFeatureReport(byte[] buffer, int length = -1)
@@ -103,7 +97,7 @@ namespace USBInterface
             {
                 length = buffer.Length;
             }
-            if (HidApi.hid_get_feature_report(DeviceHandle, buffer, (uint)length) < 0)
+            if (HidApi.hid_get_feature_report(_deviceHandle, buffer, (uint)length) < 0)
             {
                 throw new Exception("failed to get feature report");
             }
@@ -116,7 +110,7 @@ namespace USBInterface
             {
                 length = buffer.Length;
             }
-            if (HidApi.hid_send_feature_report(DeviceHandle, buffer, (uint)length) < 0)
+            if (HidApi.hid_send_feature_report(_deviceHandle, buffer, (uint)length) < 0)
             {
                 throw new Exception("failed to send feature report");
             }
@@ -132,12 +126,12 @@ namespace USBInterface
             {
                 length = buffer.Length;
             }
-            int bytes_read = HidApi.hid_read_timeout(DeviceHandle, buffer, (uint)length, readTimeoutInMillisecs);
-            if (bytes_read < 0)
+            var bytesRead = HidApi.hid_read_timeout(_deviceHandle, buffer, (uint)length, _readTimeoutInMillisecs);
+            if (bytesRead < 0)
             {
                 throw new Exception("Failed to Read.");
             }
-            return bytes_read;
+            return bytesRead;
         }
 
         // Meaning OutputReport
@@ -148,7 +142,7 @@ namespace USBInterface
             {
                 length = buffer.Length;
             }
-            if (HidApi.hid_write(DeviceHandle, buffer, (uint)length) < 0)
+            if (HidApi.hid_write(_deviceHandle, buffer, (uint)length) < 0)
             {
                 throw new Exception("Failed to write.");
             }
@@ -157,7 +151,7 @@ namespace USBInterface
         public string GetErrorString()
         {
             AssertValidDev();
-            IntPtr ret = HidApi.hid_error(DeviceHandle);
+            var ret = HidApi.hid_error(_deviceHandle);
             // I can not find the info in the docs, but guess this frees 
             // the ret pointer after we created a managed string object
             // else this would be a memory leak
@@ -173,56 +167,56 @@ namespace USBInterface
         // buffer beforehand and just divide the capacity by 4.
         public string GetIndexedString(int index)
         {
-            lock(syncLock)
+            lock(_syncLock)
             {
                 AssertValidDev();
-                if (HidApi.hid_get_indexed_string(DeviceHandle, index, pOutBuf, (uint)pOutBuf.Capacity / 4) < 0)
+                if (HidApi.hid_get_indexed_string(_deviceHandle, index, _pOutBuf, (uint)_pOutBuf.Capacity / 4) < 0)
                 {
                     throw new Exception("failed to get indexed string");
                 }
-                return pOutBuf.ToString();
+                return _pOutBuf.ToString();
             }
         }
 
         public string GetManufacturerString()
         {
-            lock (syncLock)
+            lock (_syncLock)
             {
                 AssertValidDev();
-                pOutBuf.Clear();
-                if (HidApi.hid_get_manufacturer_string(DeviceHandle, pOutBuf, (uint)pOutBuf.Capacity / 4) < 0)
+                _pOutBuf.Clear();
+                if (HidApi.hid_get_manufacturer_string(_deviceHandle, _pOutBuf, (uint)_pOutBuf.Capacity / 4) < 0)
                 {
                     throw new Exception("failed to get manufacturer string");
                 }
-                return pOutBuf.ToString();
+                return _pOutBuf.ToString();
             }
         }
 
         public string GetProductString()
         {
-            lock (syncLock)
+            lock (_syncLock)
             {
                 AssertValidDev();
-                pOutBuf.Clear();
-                if (HidApi.hid_get_product_string(DeviceHandle, pOutBuf, (uint)pOutBuf.Capacity / 4) < 0)
+                _pOutBuf.Clear();
+                if (HidApi.hid_get_product_string(_deviceHandle, _pOutBuf, (uint)_pOutBuf.Capacity / 4) < 0)
                 {
                     throw new Exception("failed to get product string");
                 }
-                return pOutBuf.ToString();
+                return _pOutBuf.ToString();
             }
         }
 
         public string GetSerialNumberString()
         {
-            lock (syncLock)
+            lock (_syncLock)
             {
                 AssertValidDev();
-                pOutBuf.Clear();
-                if (HidApi.hid_get_serial_number_string(DeviceHandle, pOutBuf, (uint)pOutBuf.Capacity / 4) < 0)
+                _pOutBuf.Clear();
+                if (HidApi.hid_get_serial_number_string(_deviceHandle, _pOutBuf, (uint)_pOutBuf.Capacity / 4) < 0)
                 {
                     throw new Exception("failed to get serial number string");
                 }
-                return pOutBuf.ToString();
+                return _pOutBuf.ToString();
             }
         }
 
@@ -233,14 +227,14 @@ namespace USBInterface
                 , GetManufacturerString(), GetProductString(), GetSerialNumberString());
         }
 
-        public void Write(byte[] user_data)
+        public void Write(byte[] userData)
         {
             // so we don't read and write at the same time
-            lock (syncLock)
+            lock (_syncLock)
             {
-                byte[] output_report = new byte[user_data.Length];
-                Array.Copy(user_data, output_report, output_report.Length);
-                WriteRaw(output_report);
+                var outputReport = new byte[userData.Length];
+                Array.Copy(userData, outputReport, outputReport.Length);
+                WriteRaw(outputReport);
             }
         }
 
@@ -254,19 +248,19 @@ namespace USBInterface
         // Output, Input, Feature reports.
         public byte[] Read(int reportLen = -1)
         {
-            lock(syncLock)
+            lock(_syncLock)
             {
-                int length = reportLen;
+                var length = reportLen;
                 if (length < 0)
                 {
                     // when we have Report IDs and the user did not specify the reportLen explicitly
                     // then add an extra byte to account for the Report ID
-                    length = hasReportIds ? DefaultInputReportLength + 1 : DefaultInputReportLength;
+                    length = _hasReportIds ? _defaultInputReportLength + 1 : _defaultInputReportLength;
                 }
-                byte[] input_report = new byte[length];
-                int read_bytes = ReadRaw(input_report);
-                byte[] ret = new byte[read_bytes];
-                Array.Copy(input_report, 0, ret, 0, read_bytes);
+                var inputReport = new byte[length];
+                var readBytes = ReadRaw(inputReport);
+                var ret = new byte[readBytes];
+                Array.Copy(inputReport, 0, ret, 0, readBytes);
                 return ret;
             }
         }
@@ -274,20 +268,19 @@ namespace USBInterface
         public void StartAsyncRead()
         {
             // Build the thread to listen for reads
-            if (asyncReadOn)
+            if (_asyncReadOn)
             {
                 // dont run more than one read
                 return;
             }
-            asyncReadOn = true;
-            readThread = new Thread(ReadLoop);
-            readThread.Name = "HidApiReadAsyncThread";
-            readThread.Start();
+            _asyncReadOn = true;
+            _readThread = new Thread(ReadLoop) {Name = "HidApiReadAsyncThread"};
+            _readThread.Start();
         }
 
         public void StopAsyncRead()
         {
-            asyncReadOn = false;
+            _asyncReadOn = false;
         }
 
         private void ReadLoop()
@@ -298,25 +291,22 @@ namespace USBInterface
 
             // The read has a timeout parameter, so every X milliseconds
             // we check if the user wants us to continue reading.
-            while (asyncReadOn)
+            while (_asyncReadOn)
             {
                 try
                 {
-                    byte[] res = Read();
+                    var res = Read();
                     // when read >0 bytes, tell others about data
-                    if (res.Length > 0 && this.InputReportArrivedEvent != null)
+                    if (res.Length > 0)
                     {
-                        InputReportArrivedEvent(this, new ReportEventArgs(res));
+                        InputReportArrivedEvent?.Invoke(this, new ReportEventArgs(res));
                     }
                 }
                 catch (Exception)
                 {
                     // when read <0 bytes, means an error has occurred
                     // stop device, break from loop and stop this thread
-                    if (this.DeviceDisconnecedEvent != null)
-                    {
-                        DeviceDisconnecedEvent(this, EventArgs.Empty);
-                    }
+                    DeviceDisconnecedEvent?.Invoke(this, EventArgs.Empty);
                     // call the dispose method in separate thread, 
                     // otherwise this thread would never get to die
                     new Thread(Dispose).Start();
@@ -325,7 +315,7 @@ namespace USBInterface
                 // when read 0 bytes, sleep and read again
                 // We must sleep for some time to allow others
                 // to write to the device.
-                Thread.Sleep(readIntervalInMillisecs);
+                Thread.Sleep(_readIntervalInMillisecs);
             }
         }
 
@@ -339,49 +329,42 @@ namespace USBInterface
         // Protected implementation of Dispose pattern.
         protected virtual void Dispose(bool disposing)
         {
-            if (disposed)
+            if (_disposed)
             {
                 return;
             }
             if (disposing)
             {
                 // Free any other managed objects here.
-                if (asyncReadOn)
+                if (_asyncReadOn)
                 {
-                    asyncReadOn = false;
-                    readThread.Join(readTimeoutInMillisecs);
-                    if (readThread.IsAlive)
+                    _asyncReadOn = false;
+                    _readThread.Join(_readTimeoutInMillisecs);
+                    if (_readThread.IsAlive)
                     {
-                        readThread.Abort();
+                        _readThread.Abort();
                     }
                 }
             }
             // Free any UN-managed objects here.
             // so we are not reading or writing as the device gets closed
-            lock (syncLock)
+            lock (_syncLock)
             {
-                if (isOpen)
+                if (IsOpen)
                 {
-                    HidApi.hid_close(DeviceHandle);
-                    DeviceHandle = IntPtr.Zero;
+                    HidApi.hid_close(_deviceHandle);
+                    _deviceHandle = IntPtr.Zero;
                 }
             }
             HidApi.hid_exit();
             // mark object as having been disposed
-            disposed = true;
+            _disposed = true;
         }
 
         ~USBDevice()
         {
             Dispose(false);
         }
-
-        private string EncodeBuffer(byte[] buffer)
-        {
-            // the buffer contains trailing '\0' char to mark its end.
-            return Encoding.Unicode.GetString(buffer).Trim('\0');
-        }
-
     }
 }
 
