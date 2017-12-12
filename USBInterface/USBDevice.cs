@@ -85,6 +85,16 @@ namespace USBInterface
             _hasReportIds = hasReportIDs;
         }
 
+        public USBDevice(string path
+            , bool hasReportIDs = true
+            , int defaultInputReportLen = -1)
+        {
+            _deviceHandle = HidApi.hid_open_path(path);
+            AssertValidDev();
+            _defaultInputReportLength = defaultInputReportLen;
+            _hasReportIds = hasReportIDs;
+        }
+
         private void AssertValidDev()
         {
             if (_deviceHandle == IntPtr.Zero) throw new Exception("No device opened");

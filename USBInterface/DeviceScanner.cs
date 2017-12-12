@@ -1,22 +1,44 @@
 ﻿using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Threading;
 
 namespace USBInterface
 {
     public class DeviceScanner
-    { 
-        public event EventHandler DeviceArrived;
-        public event EventHandler DeviceRemoved;
+    {
+        public class DeviceRemovedArgs
+        {
+            public DeviceRemovedArgs(string path)
+            {
+                Path = path;
+            }
+            public string Path { get; }
+        }
 
-        public bool IsDeviceConnected => _deviceConnected;
+        public class DeviceArrivedArgs
+        {
+            public DeviceArrivedArgs(string path)
+            {
+                Path = path;
+            }
 
-        // for async reading
+            public string Path { get; }
+        }
+
+        public event EventHandler<DeviceArrivedArgs> DeviceArrived;
+        public event EventHandler<DeviceRemovedArgs> DeviceRemoved;
+
+        private readonly List<string> _connectedDevices = new List<string>();
+
+        // for async reading    
         private readonly object _syncLock = new object();
         private Thread _scannerThread;
         private volatile bool _asyncScanOn;
-
-        private volatile bool _deviceConnected;
 
         private int _scanIntervalMillisecs = 10;
         public int ScanIntervalInMillisecs
@@ -41,9 +63,21 @@ namespace USBInterface
         }
 
         // scanning for device when it is open by another process will return false
-        public static bool ScanOnce(ushort vid, ushort pid)
+        public static List<HidDeviceInfo> ScanOnce(ushort vid, ushort pid)
         {
-            return HidApi.hid_enumerate(vid, pid) != IntPtr.Zero;
+            var list = new List<HidDeviceInfo>();
+
+            var pDev = HidApi.hid_enumerate(vid, pid);
+            while (pDev != IntPtr.Zero)
+            {
+                var dev = (HidDeviceInfo)Marshal.PtrToStructure(pDev, typeof(HidDeviceInfo));
+                list.Add(dev);
+                // freeing the enumeration releases the device, 
+                // do it as soon as you can, so we dont block device from others
+                HidApi.hid_free_enumeration(pDev);
+                pDev = dev.next;
+            }
+            return list;
         }
 
         public void StartAsyncScan()
@@ -76,27 +110,27 @@ namespace USBInterface
             {
                 try
                 {
-                    var deviceInfo = HidApi.hid_enumerate(_vendorId, _productId);
-                    var deviceOnBus = deviceInfo != IntPtr.Zero;
-                    // freeing the enumeration releases the device, 
-                    // do it as soon as you can, so we dont block device from others
-                    HidApi.hid_free_enumeration(deviceInfo);
-                    if (deviceOnBus && ! _deviceConnected)
+                    var deviceInfo = ScanOnce(_vendorId, _productId);
+
+                    var newlyConnectedDevices = deviceInfo.Where(di => !_connectedDevices.Contains(di.path)).ToArray();
+                    var removedDevicePaths = _connectedDevices.Where(cd => deviceInfo.All(di => di.path != cd)).ToArray();
+
+                    foreach (var newlyConnectedDevice in newlyConnectedDevices)
                     {
-                        // just found new device
-                        _deviceConnected = true;
-                        DeviceArrived?.Invoke(this, EventArgs.Empty);
+                        DeviceArrived?.Invoke(this, new DeviceArrivedArgs(newlyConnectedDevice.path));
+                        _connectedDevices.Add(newlyConnectedDevice.path);
                     }
-                    if (! deviceOnBus && _deviceConnected)
+
+                    foreach (var removedDevicePath in removedDevicePaths)
                     {
-                        // just lost device connection
-                        _deviceConnected = false;
-                        DeviceRemoved?.Invoke(this, EventArgs.Empty);
+                        DeviceRemoved?.Invoke(this, new DeviceRemovedArgs(removedDevicePath));
+                        _connectedDevices.Remove(removedDevicePath);
                     }
                 }
-                catch (Exception)
+                catch (Exception e)
                 {
                     // stop scan, user can manually restart again with StartAsyncScan()
+                    Console.WriteLine(e.ToString());
                     _asyncScanOn = false;
                 }
                 // when read 0 bytes, sleep and read again
